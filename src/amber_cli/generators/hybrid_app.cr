@@ -87,14 +87,15 @@ MARKDOWN
         end
         io << <<-YAML
 \ndependencies:
-  # Development branches until the Android-capable releases are published.
-  # Explicit local overrides are required before those branches contain this work.
+  # Commit pins on the GitHub-hosted Android-capable branches until the
+  # Android-capable releases are tagged; a released CLI replaces these with
+  # version constraints. Commit pins resolve without any local checkout.
   amber:
     github: crimson-knight/amber
-    branch: master
+    commit: ab90eae910a4bd3a74f3f52ba8dfe238817994c3
   asset_pipeline:
-    github: amberframework/asset_pipeline
-    branch: feature/utility-first-css-asset-pipeline
+    github: crimson-knight/asset_pipeline
+    commit: 4c40068cd25d435e533c24c4fb219b28a6fdafcc
 YAML
       end
     end

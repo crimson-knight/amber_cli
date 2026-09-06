@@ -44,8 +44,9 @@ hash_sources() (
   cd "$1"
   set -- src android scripts config mobile shard.yml shard.lock
   for path do
-    [[ ! -e "$path" ]] || rg --files --hidden --no-require-git \
-      -g '!**/build/**' -g '!**/.gradle/**' -g '!**/jniLibs/**' "$path"
+    # find, not ripgrep: the proof must run on hosts without rg (CI, fresh Macs).
+    [[ ! -e "$path" ]] || find "$path" -type f \
+      -not -path '*/build/*' -not -path '*/.gradle/*' -not -path '*/jniLibs/*'
   done | LC_ALL=C sort | while IFS= read -r path; do shasum -a 256 "$path"; done
 )
 hash_sources "$project" > "$proof_root/generated-source-before.sha256"
