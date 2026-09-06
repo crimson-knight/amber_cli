@@ -15,6 +15,7 @@
 # - GCD usage instead of Crystal spawn in NSApp applications
 require "../native/apple_shell_generator"
 require "../native/capability_manifest"
+require "../native/android_shell_generator"
 
 module AmberCLI::Generators
   class NativeApp
@@ -50,11 +51,7 @@ module AmberCLI::Generators
       create_apple_shell_files(manifest)
       create_ios_ui_tests
       create_ios_e2e_script
-      create_android_build_script
-      create_android_build_gradle
-      create_android_ui_tests
-      create_android_e2e_script
-      create_android_local_properties
+      AmberCLI::Native::AndroidShellGenerator.new(manifest, name).write(path)
       create_macos_ui_test_script
       create_macos_e2e_script
       create_mobile_ci_script
@@ -78,8 +75,7 @@ module AmberCLI::Generators
         # Apple shell outputs
         "mobile/apple/generated",
         # Android
-        "mobile/android", "mobile/android/app/src/main/jniLibs/arm64-v8a",
-        "mobile/android/app/src/androidTest/java/com/#{name}/app",
+        "mobile/android",
         # macOS test scripts
         "test/macos",
         # FSDD documentation
@@ -1201,348 +1197,6 @@ BASH
       File.chmod(script_path, 0o755)
     end
 
-    private def create_android_build_script
-      pascal_name = name.split(/[-_]/).map(&.capitalize).join
-
-      content = <<-BASH
-#!/usr/bin/env bash
-# build_crystal_lib.sh -- Cross-compile Crystal + JNI bridge for Android (aarch64)
-#
-# Produces: app/src/main/jniLibs/arm64-v8a/lib#{name}.so
-#
-# Prerequisites:
-#   - crystal-alpha compiler
-#   - Android NDK (ANDROID_SDK_ROOT or NDK_ROOT env var)
-#   - Pre-built libgc.a for aarch64-linux-android26
-#
-# CRITICAL: libgc.a for Android must be compiled with GC_BUILTIN_ATOMIC flag.
-# Use NDK's llvm-ar (not system ar) to create the archive.
-#
-# Usage:
-#   cd #{name} && ./mobile/android/build_crystal_lib.sh
-
-set -euo pipefail
-
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-
-CRYSTAL="${CRYSTAL:-crystal-alpha}"
-TARGET="aarch64-linux-android26"
-API_LEVEL=26
-HOST_TAG="darwin-x86_64"
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-MOBILE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-PROJECT_ROOT="$(cd "$MOBILE_DIR/.." && pwd)"
-BUILD_DIR="$SCRIPT_DIR/build"
-JNILIBS_DIR="$SCRIPT_DIR/app/src/main/jniLibs/arm64-v8a"
-BRIDGE_SRC="$MOBILE_DIR/shared/bridge.cr"
-BRIDGE_BASE="$BUILD_DIR/bridge"
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-info()  { printf '\\033[0;34m[build]\\033[0m %s\\n' "$*"; }
-ok()    { printf '\\033[0;32m[ok]\\033[0m    %s\\n' "$*"; }
-fail()  { printf '\\033[0;31m[fail]\\033[0m  %s\\n' "$*" >&2; exit 1; }
-
-require_cmd() {
-    command -v "$1" >/dev/null 2>&1 || fail "Required command not found: $1"
-}
-
-# ---------------------------------------------------------------------------
-# Preflight
-# ---------------------------------------------------------------------------
-
-require_cmd "$CRYSTAL"
-
-[[ ! -f "$BRIDGE_SRC" ]] && fail "Bridge source not found: $BRIDGE_SRC"
-
-# Locate NDK
-ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-/opt/homebrew/share/android-commandlinetools}"
-NDK_ROOT="${NDK_ROOT:-$(ls -d "$ANDROID_SDK_ROOT"/ndk/*/ 2>/dev/null | sort -V | tail -1)}"
-NDK_ROOT="${NDK_ROOT%/}"
-
-if [[ -z "$NDK_ROOT" ]] || [[ ! -d "$NDK_ROOT" ]]; then
-    fail "NDK not found. Set NDK_ROOT or install NDK under \\$ANDROID_SDK_ROOT/ndk/"
-fi
-
-NDK_CLANG="$NDK_ROOT/toolchains/llvm/prebuilt/$HOST_TAG/bin/${TARGET}-clang"
-CLANG_FLAGS=""
-if [[ ! -f "$NDK_CLANG" ]]; then
-    NDK_CLANG="$NDK_ROOT/toolchains/llvm/prebuilt/$HOST_TAG/bin/clang"
-    CLANG_FLAGS="--target=$TARGET"
-    [[ ! -f "$NDK_CLANG" ]] && fail "NDK clang not found at: $NDK_CLANG"
-fi
-
-SYSROOT="$NDK_ROOT/toolchains/llvm/prebuilt/$HOST_TAG/sysroot"
-
-info "Target         : $TARGET"
-info "NDK root       : $NDK_ROOT"
-info "Bridge source  : $BRIDGE_SRC"
-
-mkdir -p "$BUILD_DIR" "$JNILIBS_DIR"
-
-# ---------------------------------------------------------------------------
-# Step 1: Compile JNI bridge
-# ---------------------------------------------------------------------------
-
-info "Compiling JNI bridge..."
-
-cat > "$BUILD_DIR/jni_bridge.c" << 'JNIC'
-#include <android/log.h>
-#include <jni.h>
-
-// Crystal trace function — routes to Android logcat
-void crystal_trace(const char *msg) {
-    __android_log_print(ANDROID_LOG_DEBUG, "#{pascal_name}", "%s", msg);
-}
-JNIC
-
-"$NDK_CLANG" $CLANG_FLAGS -c "$BUILD_DIR/jni_bridge.c" -o "$BUILD_DIR/jni_bridge.o" \\
-    --sysroot="$SYSROOT"
-
-ok "JNI bridge compiled"
-
-# ---------------------------------------------------------------------------
-# Step 2: Cross-compile Crystal bridge
-# ---------------------------------------------------------------------------
-
-info "Cross-compiling Crystal bridge for Android..."
-
-"$CRYSTAL" build "$BRIDGE_SRC" \\
-    --cross-compile \\
-    --target="$TARGET" \\
-    -Dandroid \\
-    -o "$BRIDGE_BASE"
-
-ok "Crystal cross-compilation complete"
-
-# ---------------------------------------------------------------------------
-# Step 3: Link shared library
-# ---------------------------------------------------------------------------
-# CRITICAL: -laaudio is REQUIRED for AAudio recording/playback on Android.
-# Missing -laaudio causes undefined symbol errors at runtime.
-
-info "Linking shared library..."
-
-"$NDK_CLANG" $CLANG_FLAGS \\
-    "$BRIDGE_BASE.o" "$BUILD_DIR/jni_bridge.o" \\
-    -shared -o "$JNILIBS_DIR/lib#{name}.so" \\
-    --sysroot="$SYSROOT" \\
-    -laaudio -llog -landroid \\
-    -lm -ldl -lc
-
-ok "Shared library created: $JNILIBS_DIR/lib#{name}.so"
-
-info "Done!"
-BASH
-
-      script_path = File.join(path, "mobile/android/build_crystal_lib.sh")
-      File.write(script_path, content)
-      File.chmod(script_path, 0o755)
-    end
-
-    private def create_android_build_gradle
-      pascal_name = name.split(/[-_]/).map(&.capitalize).join
-
-      content = <<-GRADLE
-plugins {
-    id("com.android.application")
-    id("org.jetbrains.kotlin.android")
-}
-
-android {
-    namespace = "com.#{name}.app"
-    compileSdk = 34
-
-    defaultConfig {
-        applicationId = "com.#{name}.app"
-        minSdk = 26
-        targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
-
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-
-        ndk {
-            // Crystal cross-compiles to arm64-v8a only
-            abiFilters += "arm64-v8a"
-        }
-    }
-
-    buildTypes {
-        release {
-            isMinifyEnabled = false
-        }
-    }
-
-    buildFeatures {
-        compose = true
-    }
-
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.1"
-    }
-
-    // IMPORTANT: Android build requires JDK 17 (AGP 8.x incompatible with JDK 25)
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-}
-
-dependencies {
-    implementation("androidx.core:core-ktx:1.12.0")
-    implementation("androidx.activity:activity-compose:1.8.0")
-    implementation(platform("androidx.compose:compose-bom:2024.02.00"))
-    implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.material3:material3")
-    // material-icons-extended required for Mic/Stop/AudioFile icons
-    implementation("androidx.compose.material:material-icons-extended")
-
-    androidTestImplementation("androidx.test.ext:junit:1.1.5")
-    androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
-    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
-}
-GRADLE
-
-      File.write(File.join(path, "mobile/android/build.gradle.kts"), content)
-    end
-
-    private def create_android_ui_tests
-      pascal_name = name.split(/[-_]/).map(&.capitalize).join
-
-      content = <<-KOTLIN
-package com.#{name}.app
-
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.assertIsDisplayed
-import androidx.test.ext.junit.runners.AndroidJUnit4
-import org.junit.Rule
-import org.junit.Test
-import org.junit.runner.RunWith
-
-// L2 Android Compose UI Tests for #{pascal_name}
-// Uses testTag (mapped from Asset Pipeline test_id / contentDescription)
-// test_id convention (FSDD): {epic}.{story}-{element-name}
-//
-// IMPORTANT: Build requires JDK 17 (AGP 8.x incompatible with JDK 25)
-//   JAVA_HOME=/opt/homebrew/Cellar/openjdk@17/17.0.18/libexec/openjdk.jdk/Contents/Home ./gradlew connectedAndroidTest
-
-@RunWith(AndroidJUnit4::class)
-class #{pascal_name}UITests {
-
-    // Add compose test rule when Activity is created:
-    // @get:Rule
-    // val composeTestRule = createAndroidComposeRule<MainActivity>()
-
-    @Test
-    fun appLaunches() {
-        // Verify the app launches without crashing
-        assert(true)
-    }
-
-    // Add UI tests using testTag:
-    // @Test
-    // fun mainViewExists() {
-    //     composeTestRule.onNodeWithTag("1.1-welcome-label").assertIsDisplayed()
-    // }
-}
-KOTLIN
-
-      File.write(File.join(path, "mobile/android/app/src/androidTest/java/com/#{name}/app/#{pascal_name}UITests.kt"), content)
-    end
-
-    private def create_android_e2e_script
-      pascal_name = name.split(/[-_]/).map(&.capitalize).join
-
-      content = <<-BASH
-#!/usr/bin/env bash
-# L3 E2E test script for #{pascal_name} Android
-# Runs the full build + test cycle without JS/Python dependencies.
-#
-# IMPORTANT: Requires JDK 17 (AGP 8.x incompatible with JDK 25)
-#
-# Usage: cd #{name} && ./mobile/android/test_android.sh
-
-set -euo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-
-# JDK 17 required for Android Gradle Plugin
-export JAVA_HOME="${JAVA_HOME:-/opt/homebrew/Cellar/openjdk@17/17.0.18/libexec/openjdk.jdk/Contents/Home}"
-
-info()  { printf '\\033[0;34m[test]\\033[0m %s\\n' "$*"; }
-ok()    { printf '\\033[0;32m[pass]\\033[0m %s\\n' "$*"; }
-fail()  { printf '\\033[0;31m[fail]\\033[0m %s\\n' "$*" >&2; exit 1; }
-
-PASS=0
-TOTAL=0
-
-check() {
-    TOTAL=$((TOTAL + 1))
-    if eval "$2"; then
-        ok "$1"
-        PASS=$((PASS + 1))
-    else
-        fail "$1"
-    fi
-}
-
-# Step 1: Build Crystal shared library
-info "Step 1/6: Building Crystal library for Android..."
-cd "$PROJECT_ROOT"
-check "Crystal lib builds" "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-/opt/homebrew/share/android-commandlinetools} ./mobile/android/build_crystal_lib.sh"
-
-# Step 2: Verify shared library exists
-info "Step 2/6: Verifying shared library..."
-check "lib#{name}.so exists" "[ -f mobile/android/app/src/main/jniLibs/arm64-v8a/lib#{name}.so ]"
-
-# Step 3: Build Android APK
-info "Step 3/6: Building Android APK..."
-cd "$SCRIPT_DIR"
-check "Gradle build succeeds" "./gradlew assembleDebug 2>/dev/null"
-
-# Step 4: Verify APK exists
-info "Step 4/6: Verifying APK..."
-check "Debug APK exists" "[ -f app/build/outputs/apk/debug/app-debug.apk ]"
-
-# Step 5: Run instrumented tests (requires connected device/emulator)
-info "Step 5/6: Running instrumented tests..."
-check "Android tests pass" "./gradlew connectedAndroidTest 2>/dev/null || echo 'Skipped (no device)'"
-
-# Step 6: Summary
-info "Step 6/6: Results"
-echo ""
-echo "===================="
-echo "  $PASS / $TOTAL passed"
-echo "===================="
-BASH
-
-      script_path = File.join(path, "mobile/android/test_android.sh")
-      File.write(script_path, content)
-      File.chmod(script_path, 0o755)
-    end
-
-    private def create_android_local_properties
-      content = <<-PROPS
-# local.properties
-# IMPORTANT: This file should NOT be committed to version control.
-# Android SDK location (adjust to your system)
-sdk.dir=/opt/homebrew/share/android-commandlinetools
-PROPS
-
-      File.write(File.join(path, "mobile/android/local.properties"), content)
-    end
 
     private def create_macos_ui_test_script
       pascal_name = name.split(/[-_]/).map(&.capitalize).join
@@ -1673,7 +1327,7 @@ BASH
 #
 # Test layers:
 #   L1: Crystal specs (process managers, state machines, event bus)
-#   L2: Platform UI tests (XCUITest, Compose, AppleScript)
+#   L2: Platform UI tests (XCUITest, native Android Views, AppleScript)
 #   L3: E2E scripts (full build-run-verify cycle)
 
 set -euo pipefail
@@ -1725,7 +1379,7 @@ if [[ "$RUN_E2E" == "true" ]]; then
     info "=== L3: E2E Tests ==="
     run_step "macOS E2E" "test/macos/test_macos_e2e.sh 2>/dev/null"
     run_step "iOS E2E" "mobile/ios/test_ios.sh 2>/dev/null || true"
-    run_step "Android E2E" "mobile/android/test_android.sh 2>/dev/null || true"
+    run_step "Android E2E" 'bash mobile/android/test_android.sh "${ANDROID_SERIAL:-}"'
 fi
 
 # --- Summary ---

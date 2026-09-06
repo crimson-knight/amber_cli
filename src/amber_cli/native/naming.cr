@@ -27,6 +27,13 @@ module AmberCLI::Native
       "#{base}#{suffix}"
     end
 
+    def android_application_id(value : String) : String
+      parts = normalized_parts(value).map(&.downcase)
+      parts = ["nativeapp"] if parts.empty?
+      parts = parts.map { |part| part.matches?(/\A[a-z]/) ? part : "app#{part}" }
+      "com.example.#{parts.join('.')}"
+    end
+
     def swift_string_literal(value : String) : String
       escaped = value.gsub("\\", "\\\\").gsub("\"", "\\\"").gsub("\n", "\\n")
       %("#{escaped}")

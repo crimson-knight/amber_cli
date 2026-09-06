@@ -2,6 +2,7 @@ require "set"
 require "yaml"
 require "asset_pipeline/ui"
 require "./naming"
+require "./android_capabilities"
 
 module AmberCLI::Native
   class CapabilityManifest
@@ -10,8 +11,11 @@ module AmberCLI::Native
 
     property schema_version : Int32 = 1
     property apple : AppleCapabilities = AppleCapabilities.new
+    property app : ApplicationMetadata? = nil
+    property android : AndroidCapabilities? = nil
 
-    def initialize(@schema_version : Int32 = 1, @apple : AppleCapabilities = AppleCapabilities.new)
+    def initialize(@schema_version : Int32 = 1, @apple : AppleCapabilities = AppleCapabilities.new,
+                   @app : ApplicationMetadata? = nil, @android : AndroidCapabilities? = nil)
     end
 
     def self.default_for(app_name : String) : self
@@ -19,7 +23,9 @@ module AmberCLI::Native
       slug = Naming.slugify(app_name, "native-app")
       bundle_identifier = "com.example.#{Naming.bundle_identifier_segment(app_name)}"
 
-      manifest = new
+      manifest = new(schema_version: 2,
+        app: ApplicationMetadata.new(bundle_identifier, pascal_name),
+        android: AndroidCapabilities.new(Naming.android_application_id(app_name)))
       manifest.apple.bundle_identifier = bundle_identifier
       manifest.apple.minimum_ios_version = "16.1"
       manifest.apple.windows << WindowSpec.new(
@@ -89,8 +95,23 @@ module AmberCLI::Native
     end
 
     def validate! : self
-      raise ArgumentError.new("native capability manifest schema_version must be 1") unless @schema_version == 1
-      @apple.validate!
+      case @schema_version
+      when 1
+        if @app || @android
+          raise ArgumentError.new("app and android metadata require native capability manifest schema_version 2")
+        end
+        @apple.validate!
+      when 2
+        metadata = @app || raise ArgumentError.new("native capability manifest v2 requires app metadata")
+        metadata.validate!
+        if metadata.targets.includes?("android") && @android.nil?
+          raise ArgumentError.new("app.targets includes android but android metadata is missing")
+        end
+        @android.try(&.validate!)
+        @apple.validate! if metadata.targets.any? { |target| {"macos", "ios"}.includes?(target) }
+      else
+        raise ArgumentError.new("native capability manifest schema_version must be 1 or 2")
+      end
       self
     end
 
@@ -98,7 +119,8 @@ module AmberCLI::Native
       validate!
       String.build do |io|
         io << "# Native capability manifest for Amber native applications.\n"
-        io << "# Edit this file to declare Apple shell surfaces.\n"
+        io << "# Edit this file to declare shared metadata and explicit platform capabilities.\n"
+        io << "# Capability declarations are not runtime permission grants or implementation proof.\n"
         io << "# Amber CLI owns mobile/apple/generated/**/*; keep hand edits in mobile/ios/Sources/**/*.\n\n"
         io << to_yaml
       end
