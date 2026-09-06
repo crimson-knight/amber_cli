@@ -1,5 +1,29 @@
 # Android generator — development checkpoint
 
+## Released-lane consumer proof from GitHub-hosted commits — September 6
+
+`amber new counter_app --type hybrid --targets web,android`, run with the CLI
+built from this branch (`shards install --without-development --skip-postinstall`
+because the linter's post-install step does not compile on Crystal 1.21), now
+emits commit pins instead of branch references: Amber at
+`crimson-knight/amber` commit `ab90eae9` (the native facade) and AssetPipeline at
+`crimson-knight/asset_pipeline` commit `4c40068c` (the API 36 migration). With
+that, `scripts/test_generated_android.sh <serial> bin/amber --released` passes
+its structural gate (no `path:` or `branch:` anywhere) and completes from an
+empty directory with **no local checkout of either dependency**: shards resolve
+from GitHub, the shared specs pass, the generated web app passes its runtime
+checks, both ABI dependency bundles build fresh, the Crystal object links, the
+Gradle project packages, and the emulator runs **13 Android tests plus the
+separate exact-state process restoration** on API 35 (`emulator-5556`). Evidence:
+`~/android_target_evidence/2026-09-06-claude/consumer-released-api35/`.
+
+This is the generated-project end-to-end gate in every respect except the tag:
+the pins are commits on pushed branches rather than released versions. Tagging
+those commits and replacing the pins with version constraints is the remaining
+release step. The proof script now hashes sources with `find` rather than
+ripgrep so it runs on hosts without `rg`.
+
+
 ## Equal-width native actions — September 6
 
 The [equal-width checkpoint](../../asset_pipeline/docs/android-equal-width-proof-2026-09-06.md)
