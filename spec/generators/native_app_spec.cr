@@ -269,7 +269,7 @@ describe AmberCLI::Generators::NativeApp do
         generator.generate
 
         manifest = File.read(File.join(project_path, "config/native.yml"))
-        manifest.should contain("schema_version: 1")
+        manifest.should contain("schema_version: 2")
         manifest.should contain("bundle_identifier: com.example.my.app")
         manifest.should contain("minimum_ios_version: \"16.1\"")
         manifest.should contain("widgets:")
@@ -330,7 +330,7 @@ describe AmberCLI::Generators::NativeApp do
       end
     end
 
-    it "creates Android build script with -laaudio flag" do
+    it "builds Android through the canonical runtime with verified per-ABI dependencies" do
       SpecHelper.within_temp_directory do |temp_dir|
         project_path = File.join(temp_dir, "my_app")
         generator = AmberCLI::Generators::NativeApp.new(project_path, "my_app")
@@ -340,30 +340,33 @@ describe AmberCLI::Generators::NativeApp do
         File.exists?(script_path).should be_true
 
         content = File.read(script_path)
-        # CRITICAL: -laaudio is required for Android audio
-        content.should contain("-laaudio")
-        content.should contain("-llog")
-        content.should contain("-landroid")
-        content.should contain("-Dandroid")
-        content.should contain("GC_BUILTIN_ATOMIC")
-        content.should contain("crystal-alpha")
+        content.should contain("scripts/cross_compile_deps.sh")
+        content.should contain("scripts/build_android.sh")
+        content.should contain("src/ui/native/android_host_jni.c")
+        content.should contain("src/ui/native/android_private_files.c")
+        content.should contain("src/platform/android/app.cr")
+        content.should contain("android_each_abi")
+        content.should_not contain("crystal-alpha")
+        content.should_not contain("-laaudio")
 
         # Must be executable
         File.info(script_path).permissions.owner_execute?.should be_true
       end
     end
 
-    it "creates Android build.gradle.kts with JDK 17 and Compose" do
+    it "creates a complete Android View Gradle project with the pinned shared toolchain" do
       SpecHelper.within_temp_directory do |temp_dir|
         project_path = File.join(temp_dir, "my_app")
         generator = AmberCLI::Generators::NativeApp.new(project_path, "my_app")
         generator.generate
 
-        content = File.read(File.join(project_path, "mobile/android/build.gradle.kts"))
-        content.should contain("VERSION_17")
-        content.should contain("compose")
-        content.should contain("material-icons-extended")
-        content.should contain("arm64-v8a")
+        content = File.read(File.join(project_path, "mobile/android/app/build.gradle.kts"))
+        content.should contain("ANDROID_JAVA_VERSION")
+        content.should contain("ANDROID_NDK_VERSION")
+        content.should_not contain("compose")
+        content.should contain("android/runtime/src/main/java")
+        File.exists?(File.join(project_path, "mobile/android/settings.gradle.kts")).should be_true
+        File.exists?(File.join(project_path, "mobile/android/gradle/wrapper/gradle-wrapper.jar")).should be_true
       end
     end
 
@@ -380,15 +383,115 @@ describe AmberCLI::Generators::NativeApp do
       end
     end
 
-    it "creates Android UI test template with testTag convention" do
+    it "creates an Android native View test that launches the app and finds renderer content" do
       SpecHelper.within_temp_directory do |temp_dir|
         project_path = File.join(temp_dir, "my_app")
         generator = AmberCLI::Generators::NativeApp.new(project_path, "my_app")
         generator.generate
 
-        content = File.read(File.join(project_path, "mobile/android/app/src/androidTest/java/com/my_app/app/MyAppUITests.kt"))
-        content.should contain("onNodeWithTag")
-        content.should contain("{epic}.{story}-{element-name}")
+        content = File.read(File.join(project_path, "mobile/android/app/src/androidTest/java/dev/amber/generated/NativeApplicationTest.kt"))
+        content.should contain("ActivityScenario.launch(MainActivity::class.java)")
+        content.should contain("persisted_count")
+        content.should contain("debugPendingServices()")
+        content.should contain("scenario.recreate()")
+        content.should_not contain("assert(true)")
+      end
+    end
+
+    it "coordinates composing text and external edits in the generated Android input test" do
+      SpecHelper.within_temp_directory do |temp_dir|
+        project_path = File.join(temp_dir, "composing_app")
+        AmberCLI::Generators::NativeApp.new(project_path, "composing_app").generate
+        content = File.read(File.join(project_path, "mobile/android/app/src/androidTest/java/dev/amber/generated/NativeApplicationTest.kt"))
+        content.should contain(%(assertEquals("Android", editor.text.toString())))
+        composing = content.index("connection.setComposingRegion(0, editor.text.length)").not_nil!
+        finished = content.index("connection.finishComposingText()").not_nil!
+        appended = content.index("connection.commitText(").not_nil!
+        published = content.index("publishExternalEdit(editor)").not_nil!
+        composing.should be < finished
+        finished.should be < appended
+        appended.should be < published
+        content.should contain("assertEquals(-1, BaseInputConnection.getComposingSpanStart(editor.text))")
+        content.should contain("Build.VERSION.SDK_INT >= 33")
+        content.should contain("keyboard.invalidateInput(editor)")
+        content.should contain("keyboard.restartInput(editor)")
+        content.should_not contain("SHOW_FORCED")
+      end
+    end
+
+    it "rejects missing or failed host reports and crashed instrumentation even when tools return zero" do
+      SpecHelper.within_temp_directory do |temp_dir|
+        project_path = File.join(temp_dir, "failed_device_app")
+        AmberCLI::Generators::NativeApp.new(project_path, "failed_device_app").generate
+        android_dir = File.join(project_path, "mobile/android")
+        sdk = File.join(temp_dir, "sdk")
+        Dir.mkdir_p(File.join(sdk, "platform-tools"))
+        adb = File.join(sdk, "platform-tools/adb")
+        File.write(adb, "#!/usr/bin/env bash\ncase \"$*\" in *get-state*) echo device;; *getprop*) echo 1;; *'am instrument'*) echo 'INSTRUMENTATION_RESULT: shortMsg=Process crashed'; echo 'INSTRUMENTATION_CODE: 0';; esac\nexit 0\n")
+        File.chmod(adb, 0o755)
+        env_dir = File.join(project_path, "lib/asset_pipeline/scripts")
+        Dir.mkdir_p(env_dir)
+        File.write(File.join(env_dir, "android_env.sh"), "ANDROID_RESOLVED_SDK_ROOT='#{sdk}'\nANDROID_RESOLVED_JAVA_HOME='#{temp_dir}'\nandroid_resolve_sdk_root() { :; }\nandroid_resolve_java_home() { :; }\n")
+        gradle = File.join(android_dir, "gradlew")
+        File.write(gradle, "#!/usr/bin/env bash\nexit 0\n")
+        File.chmod(gradle, 0o755)
+        output = IO::Memory.new
+        result = Process.run("bash", [File.join(android_dir, "test_android.sh"), "fake-serial"], output: output, error: output)
+        result.success?.should be_false
+        output.to_s.should contain("Missing canonical host-session unit test report")
+        File.exists?(File.join(project_path, "build/android-test-evidence/instrumentation.txt")).should be_false
+
+        # This shell-protocol fixture stubs Gradle/ADB. Give the crash case a
+        # passing prerequisite report so it actually reaches instrumentation;
+        # the real generated-consumer lane executes the canonical JVM tests.
+        report = File.join(android_dir, "app/build/test-results/testDebugUnitTest/TEST-dev.assetpipeline.androidhost.HostSessionTest.xml")
+        Dir.mkdir_p(File.dirname(report))
+        [{0, 0, 0}, {1, 1, 0}, {1, 0, 1}].each do |counts|
+          File.write(report, %(<testsuite tests="#{counts[0]}" failures="#{counts[1]}" errors="#{counts[2]}"/>))
+          output = IO::Memory.new
+          result = Process.run("bash", [File.join(android_dir, "test_android.sh"), "fake-serial"], output: output, error: output)
+          result.success?.should be_false
+          output.to_s.should contain("Host-session unit tests were empty or failed")
+          File.exists?(File.join(project_path, "build/android-test-evidence/instrumentation.txt")).should be_false
+        end
+        File.write(report, %(<testsuite tests="1" failures="0" errors="0"/>))
+        # The same mandatory-report gate covers asynchronous-service unit tests.
+        service_report = File.join(File.dirname(report), "TEST-dev.assetpipeline.androidhost.ServiceQueueTest.xml")
+        output = IO::Memory.new
+        result = Process.run("bash", [File.join(android_dir, "test_android.sh"), "fake-serial"], output: output, error: output)
+        result.success?.should be_false
+        output.to_s.should contain("Missing canonical service-queue unit test report")
+        [{0, 0, 0}, {1, 1, 0}, {1, 0, 1}].each do |counts|
+          File.write(service_report, %(<testsuite tests="#{counts[0]}" failures="#{counts[1]}" errors="#{counts[2]}"/>))
+          output = IO::Memory.new
+          result = Process.run("bash", [File.join(android_dir, "test_android.sh"), "fake-serial"], output: output, error: output)
+          result.success?.should be_false
+          output.to_s.should contain("Service-queue unit tests were empty or failed")
+          File.exists?(File.join(project_path, "build/android-test-evidence/instrumentation.txt")).should be_false
+        end
+        File.write(service_report, %(<testsuite tests="1" failures="0" errors="0"/>))
+        ["HttpWireTest", "PlatformHttpTest", "SecretVaultTest", "FilePolicyTest", "NotificationWireTest", "PermissionRequestsTest", "EditorActionsTest", "LayoutPolicyTest", "ViewStatePolicyTest", "SemanticsPolicyTest", "CompoundFocusPolicyTest", "DialogPolicyTest", "SheetPolicyTest"].each do |suite|
+          http_report = File.join(File.dirname(report), "TEST-dev.assetpipeline.androidhost.#{suite}.xml")
+          output = IO::Memory.new
+          result = Process.run("bash", [File.join(android_dir, "test_android.sh"), "fake-serial"], output: output, error: output)
+          result.success?.should be_false
+          output.to_s.should contain("Missing canonical service unit test report: #{suite}")
+          [{0, 0, 0}, {1, 1, 0}, {1, 0, 1}].each do |counts|
+            File.write(http_report, %(<testsuite tests="#{counts[0]}" failures="#{counts[1]}" errors="#{counts[2]}"/>))
+            output = IO::Memory.new
+            result = Process.run("bash", [File.join(android_dir, "test_android.sh"), "fake-serial"], output: output, error: output)
+            result.success?.should be_false
+            output.to_s.should contain("Service unit tests were empty or failed: #{suite}")
+            File.exists?(File.join(project_path, "build/android-test-evidence/instrumentation.txt")).should be_false
+          end
+          File.write(http_report, %(<testsuite tests="1" failures="0" errors="0"/>))
+        end
+        output = IO::Memory.new
+        result = Process.run("bash", [File.join(android_dir, "test_android.sh"), "fake-serial"], output: output, error: output)
+        result.success?.should be_false
+        File.read(File.join(project_path, "build/android-test-evidence/instrumentation.txt")).should contain("Process crashed")
+        output.to_s.should_not contain("[pass] Android tests pass")
+        output.to_s.should_not contain("Skipped (no device)")
       end
     end
 
@@ -407,6 +510,9 @@ describe AmberCLI::Generators::NativeApp do
         android_script = File.join(project_path, "mobile/android/test_android.sh")
         File.exists?(android_script).should be_true
         File.info(android_script).permissions.owner_execute?.should be_true
+        File.read(android_script).should_not contain("Skipped (no device)")
+        File.read(android_script).should contain("android.sh\" test")
+        File.exists?(File.join(project_path, "mobile/android/local.properties")).should be_false
 
         # macOS E2E
         macos_e2e = File.join(project_path, "test/macos/test_macos_e2e.sh")
@@ -435,6 +541,31 @@ describe AmberCLI::Generators::NativeApp do
         content.should contain("L1")
         content.should contain("L2")
         content.should contain("L3")
+        content.should contain("ANDROID_SERIAL")
+        content.should_not contain("mobile/android/test_android.sh 2>/dev/null || true")
+      end
+    end
+
+    it "propagates Android failure through the generated all-platform orchestrator" do
+      SpecHelper.within_temp_directory do |temp_dir|
+        project = File.join(temp_dir, "failed_android")
+        AmberCLI::Generators::NativeApp.new(project, "failed_android").generate
+        bin = File.join(temp_dir, "bin")
+        Dir.mkdir_p(bin)
+        File.write(File.join(bin, "crystal-alpha"), "#!/usr/bin/env bash\nexit 0\n")
+        File.chmod(File.join(bin, "crystal-alpha"), 0o755)
+        {"test/macos/test_macos_ui.sh", "test/macos/test_macos_e2e.sh", "mobile/ios/test_ios.sh"}.each do |path|
+          File.write(File.join(project, path), "#!/usr/bin/env bash\nexit 0\n")
+        end
+        File.write(File.join(project, "mobile/android/test_android.sh"), "#!/usr/bin/env bash\n[[ \"$1\" == fake-serial ]] || exit 4\necho 'Android failure reached orchestrator'\nexit 9\n")
+        output = IO::Memory.new
+        result = Process.run("bash", [File.join(project, "mobile/run_all_tests.sh"), "--e2e"],
+          env: {"PATH" => "#{bin}:#{ENV["PATH"]}", "ANDROID_SERIAL" => "fake-serial"},
+          output: output, error: output)
+        result.success?.should be_false
+        output.to_s.should contain("Android failure reached orchestrator")
+        output.to_s.should contain("1 FAILED")
+        output.to_s.should_not match(/\[pass\].*Android E2E/)
       end
     end
 

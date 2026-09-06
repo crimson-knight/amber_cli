@@ -2,6 +2,17 @@ require "../amber_cli_spec"
 require "../../src/amber_cli/commands/new"
 
 describe AmberCLI::Commands::NewCommand do
+  it "generates a hybrid app at the requested absolute destination" do
+    SpecHelper.within_temp_directory do |temp_dir|
+      destination = File.join(temp_dir, "hybrid_counter")
+      command = AmberCLI::Commands::NewCommand.new("new")
+      command.parse_and_execute([destination, "--type", "hybrid", "--targets", "web,android", "--no-deps"])
+      File.exists?(File.join(destination, "shard.yml")).should be_true
+      File.exists?(File.join(destination, "src/hybrid_counter_web.cr")).should be_true
+      File.exists?(File.join(destination, "src/platform/android/app.cr")).should be_true
+    end
+  end
+
   describe "#setup_command_options" do
     it "accepts --type web (default)" do
       command = AmberCLI::Commands::NewCommand.new("new")
