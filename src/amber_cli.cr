@@ -16,6 +16,7 @@ require "./amber_cli/documentation"
 
 # Load all commands - they will register themselves
 require "./amber_cli/commands/new"
+require "./amber_cli/commands/android_target"
 require "./amber_cli/commands/database"
 require "./amber_cli/commands/routes"
 require "./amber_cli/commands/watch"
@@ -67,6 +68,11 @@ module AmberCLI
 
     Available commands:
       new (n)         Create a new Amber V2 application
+      target          Add Android to an existing Amber project
+      doctor android  Check the Android development toolchain
+      build android   Build and inspect Android packages
+      run android     Launch Android on an explicit --device
+      test android    Verify Android on an explicit --device
       generate (g)    Generate models, controllers, scaffolds, jobs, mailers, schemas, channels
       database (db)   Database operations and migrations
       routes (r)      Display application routes

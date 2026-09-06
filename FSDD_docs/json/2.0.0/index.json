@@ -1,0 +1,76 @@
+{
+  "repository_name": "FSDDDemo",
+  "body": "",
+  "program": {
+    "html_id": "",
+    "path": "",
+    "kind": "module",
+    "full_name": "FSDDDemo",
+    "name": "FSDDDemo",
+    "abstract": false,
+    "types": [
+      {
+        "html_id": "auth-service",
+        "name": "AuthService",
+        "full_name": "AuthService",
+        "kind": "class",
+        "summary": "Handles user authentication and session management.",
+        "doc": "**Personas:** Developer, Security Engineer\n**Requires:** User model, bcrypt gem\n**Since:** v1.0.0\n**Ramp:** Basic login → MFA → SSO\n**Use:** `AuthService.new(config).authenticate(email, password)`\n**Result:** Returns a signed JWT on success, raises AuthError on failure\n\nRefined story: As a Developer, I want to authenticate users with email and password so they can access protected resources.",
+        "locations": [{"filename": "src/auth_service.cr", "line_number": 1, "url": null}],
+        "instance_methods": [
+          {
+            "html_id": "authenticate",
+            "name": "authenticate",
+            "abstract": false,
+            "args_string": "(email : String, password : String)",
+            "doc": "**Personas:** Developer\n**Requires:** Valid email format\n**Use:** `service.authenticate(email, password)`\n**Result:** Returns JWT token string on success",
+            "summary": "Authenticate a user by email and password",
+            "location": {"filename": "src/auth_service.cr", "line_number": 15, "url": null},
+            "def": {
+              "name": "authenticate",
+              "args": [],
+              "return_type": "String",
+              "visibility": "Public",
+              "body": ""
+            }
+          },
+          {
+            "html_id": "revoke-token",
+            "name": "revoke_token",
+            "abstract": false,
+            "args_string": "(token : String)",
+            "doc": "**Personas:** Security Engineer\n**Use:** `service.revoke_token(jwt_string)`\n**Result:** Returns true if token was valid and revoked",
+            "summary": "Revoke an active JWT token",
+            "location": {"filename": "src/auth_service.cr", "line_number": 28, "url": null},
+            "def": {
+              "name": "revoke_token",
+              "args": [],
+              "return_type": "Bool",
+              "visibility": "Public",
+              "body": ""
+            }
+          }
+        ],
+        "class_methods": [
+          {
+            "html_id": "new-auth",
+            "name": "new",
+            "abstract": false,
+            "args_string": "(config : Hash(String, String))",
+            "doc": null,
+            "summary": null,
+            "location": {"filename": "src/auth_service.cr", "line_number": 5, "url": null},
+            "def": {
+              "name": "new",
+              "args": [],
+              "return_type": "AuthService",
+              "visibility": "Public",
+              "body": ""
+            }
+          }
+        ],
+        "types": []
+      }
+    ]
+  }
+}

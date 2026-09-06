@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>AuthService — FSDD Docs</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<nav>
+  <a href="index.html">← Index</a>
+  <span class="badge class">class</span>
+  <span class="nav-title">AuthService</span>
+  
+  <span class="ver">2.0.0</span>
+  
+</nav>
+<main>
+
+  
+  
+  <div class="ramp">
+    
+    <span><strong>First appeared:</strong> v2.0.0</span>
+    
+    
+    <span><strong>Current:</strong> v2.0.0</span>
+    
+    
+  </div>
+  
+
+  
+  <p class="mloc">Source: src/auth_service.cr:1</p>
+  
+
+  
+  
+  <section class="fsdd">
+    <div class="fsdd-row"><span class="lbl">Personas</span><span>Developer, Security Engineer</span></div>
+    <div class="fsdd-row"><span class="lbl">Requires</span><span>User model, bcrypt gem</span></div>
+    <div class="fsdd-row"><span class="lbl">Since</span><span>v1.0.0</span></div>
+    <div class="fsdd-row"><span class="lbl">Ramp</span><span>Basic login → MFA → SSO</span></div>
+    <div class="fsdd-row"><span class="lbl">Use</span><code>`AuthService.new(config).authenticate(email, password)`</code></div>
+    <div class="fsdd-row"><span class="lbl">Result</span><span>Returns a signed JWT on success, raises AuthError on failure</span></div>
+    
+    <div class="story-block"><strong>Refined story:</strong>
+As a Developer, I want to authenticate users with email and password so they can access protected resources.</div>
+    
+  </section>
+  
+
+  
+  
+  <section>
+    <h2>Methods</h2>
+    
+    
+    <div class="method">
+      <div class="msig">
+        <span class="mkind">instance</span>
+        <code class="mname">authenticate(email : String, password : String) : String</code>
+        
+      </div>
+      
+      <p class="mloc">Source: src/auth_service.cr:15</p>
+      
+      
+      <p class="mloc">First appeared: v2.0.0</p>
+      
+      
+      
+      <div class="fsdd">
+        <div class="fsdd-row"><span class="lbl">Personas</span><span>Developer</span></div>
+        <div class="fsdd-row"><span class="lbl">Requires</span><span>Valid email format</span></div>
+        
+        
+        <div class="fsdd-row"><span class="lbl">Use</span><code>`service.authenticate(email, password)`</code></div>
+        <div class="fsdd-row"><span class="lbl">Result</span><span>Returns JWT token string on success</span></div>
+        
+      </div>
+      
+    </div>
+    
+    
+    <div class="method">
+      <div class="msig">
+        <span class="mkind">instance</span>
+        <code class="mname">revoke_token(token : String) : Bool</code>
+        
+      </div>
+      
+      <p class="mloc">Source: src/auth_service.cr:28</p>
+      
+      
+      <p class="mloc">First appeared: v2.0.0</p>
+      
+      
+      
+      <div class="fsdd">
+        <div class="fsdd-row"><span class="lbl">Personas</span><span>Security Engineer</span></div>
+        
+        
+        
+        <div class="fsdd-row"><span class="lbl">Use</span><code>`service.revoke_token(jwt_string)`</code></div>
+        <div class="fsdd-row"><span class="lbl">Result</span><span>Returns true if token was valid and revoked</span></div>
+        
+      </div>
+      
+    </div>
+    
+    
+    <div class="method">
+      <div class="msig">
+        <span class="mkind">class</span>
+        <code class="mname">new(config : Hash(String, String)) : AuthService</code>
+        
+      </div>
+      
+      <p class="mloc">Source: src/auth_service.cr:5</p>
+      
+      
+      <p class="mloc">First appeared: v2.0.0</p>
+      
+      
+      
+    </div>
+    
+  </section>
+  
+
+</main>
+</body>
+</html>

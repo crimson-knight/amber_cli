@@ -1,12 +1,13 @@
 require "../core/base_command"
 require "../generators/native_app"
+require "../generators/hybrid_app"
 
 # The `new` command creates a new Amber V2 application with a complete directory
 # structure, configuration files, and a working home page.
 #
 # ## Usage
 # ```
-# amber new [app_name] -d [pg | mysql | sqlite] -t [ecr | slang] --type [web | native] --no-deps
+# amber new [app_name] -d [pg | mysql | sqlite] -t [ecr | slang] --type [web | native | hybrid] --no-deps
 # ```
 #
 # ## Options
@@ -31,7 +32,7 @@ require "../generators/native_app"
 # ```
 module AmberCLI::Commands
   class NewCommand < AmberCLI::Core::BaseCommand
-    VALID_APP_TYPES = %w[web native]
+    VALID_APP_TYPES = %w[web native hybrid]
 
     getter database : String = "pg"
     getter template : String = "ecr"
@@ -39,6 +40,7 @@ module AmberCLI::Commands
     getter assume_yes : Bool = false
     getter no_deps : Bool = false
     getter name : String = ""
+    getter targets : Array(String)? = nil
 
     def help_description : String
       "Generates a new Amber V2 project"
@@ -55,13 +57,17 @@ module AmberCLI::Commands
         @template = tmpl
       end
 
-      option_parser.on("--type=TYPE", "Application type: web (default), native (cross-platform)") do |type|
+      option_parser.on("--type=TYPE", "Application type: web (default), native, hybrid") do |type|
         unless VALID_APP_TYPES.includes?(type)
           error "Invalid app type '#{type}'. Valid types: #{VALID_APP_TYPES.join(", ")}"
           exit(1)
         end
         @parsed_options["app_type"] = type
         @app_type = type
+      end
+
+      option_parser.on("--targets=TARGETS", "Explicit native/hybrid targets: android or web,android") do |value|
+        @targets = value.split(',').map(&.strip)
       end
 
       option_parser.on("-y", "--assume-yes", "Assume yes to disable interactive mode") do
@@ -82,11 +88,15 @@ module AmberCLI::Commands
       option_parser.separator "  native  Cross-platform native app (macOS, iOS, Android)"
       option_parser.separator "          Uses Asset Pipeline UI, FSDD process managers,"
       option_parser.separator "          crystal-audio, and platform build scripts."
+      option_parser.separator "          Use --targets android for an Android-only app."
+      option_parser.separator "  hybrid  Separate web and Android entrypoints over shared Crystal app rules"
       option_parser.separator ""
       option_parser.separator "Examples:"
       option_parser.separator "  amber new my_app"
       option_parser.separator "  amber new my_app -d mysql -t slang"
       option_parser.separator "  amber new my_native_app --type native"
+      option_parser.separator "  amber new my_hybrid_app --type hybrid --targets web,android"
+      option_parser.separator "  amber new my_android_app --type native --targets android"
       option_parser.separator "  amber new . -d sqlite"
     end
 
@@ -105,7 +115,7 @@ module AmberCLI::Commands
         full_path_name = Dir.current
       else
         project_name = File.basename(name)
-        full_path_name = File.join(Dir.current, name)
+        full_path_name = File.expand_path(name)
       end
 
       if full_path_name =~ /\s+/
@@ -115,9 +125,19 @@ module AmberCLI::Commands
         exit!(error: true)
       end
 
-      if app_type == "native"
+      if app_type == "hybrid" || (app_type == "native" && targets)
+        selected = targets || ["web", "android"]
+        if app_type == "native" && selected != ["android"]
+          raise ArgumentError.new("For web,android use --type hybrid; --type native --targets android selects Android only")
+        end
+        info "Creating #{app_type} application with targets: #{selected.join(", ")}"
+        AmberCLI::Generators::HybridApp.new(full_path_name, project_name, selected).generate
+        success "Created #{project_name}. Android remains a development target; see mobile/android/README.md."
+        info "Run shards install, then bash mobile/android/android.sh test <adb-serial>."
+      elsif app_type == "native"
         execute_native(full_path_name, project_name)
       else
+        raise ArgumentError.new("--targets requires --type native or --type hybrid") if targets
         execute_web(full_path_name, project_name)
       end
     end

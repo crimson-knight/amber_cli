@@ -22,6 +22,8 @@ Thumbs.db
 /docs/**
 !/docs/README.md
 !/docs/.gitkeep
+!/docs/android-manifest-v2.md
+!/docs/android-generator.md
 
 # Build artifacts
 /amber
