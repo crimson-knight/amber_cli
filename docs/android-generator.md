@@ -399,6 +399,20 @@ The test uses rebuilt app sources with previously built, revalidated GC/PCRE2
 archives and warm tool caches. It is not clean-cache or independent dependency
 reproducibility proof. x86_64 was packaged/inspected, not executed.
 
+## Release signing — September 7
+
+The generated `app/build.gradle.kts` signs the release APK and App Bundle
+from the environment and never from source control: `AMBER_ANDROID_KEYSTORE`
+(a path), `AMBER_ANDROID_KEYSTORE_PASSWORD`, `AMBER_ANDROID_KEY_ALIAS` and
+`AMBER_ANDROID_KEY_PASSWORD` must all be set for `android.sh build` to sign;
+with none set the release artifacts stay unsigned, and a partial set fails
+the Gradle configuration with the missing names. The generated
+`inspect_artifacts.sh` accepts either output name, verifies a signed release
+APK with `apksigner` and the bundle with `jarsigner`, records the signer
+certificate or `unsigned` in `release-signing.txt`, and fails when a key was
+configured but the output is unsigned. Store upload keys and the Play Console
+side are outside this generator.
+
 ## Remaining support gates
 
 The subsequent dependency milestone passed two independent, byte-identical

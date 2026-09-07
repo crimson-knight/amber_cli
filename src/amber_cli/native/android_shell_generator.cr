@@ -294,8 +294,14 @@ Saved app data survives process restart; transient View state is not persisted.
 Only one mounted native root per process is supported. Service capability
 declarations do not grant runtime permissions. Other platform adapters remain open.
 
-Release-mode bundles retain native debug symbols. Supply release signing outside
-source control and complete the runtime/device/store-policy checks before release.
+Release-mode bundles retain native debug symbols. Release signing comes from the
+environment, never from source control: set `AMBER_ANDROID_KEYSTORE`,
+`AMBER_ANDROID_KEYSTORE_PASSWORD`, `AMBER_ANDROID_KEY_ALIAS` and
+`AMBER_ANDROID_KEY_PASSWORD` to your upload key before `android.sh build`, and
+the release APK and App Bundle are signed with it and verified by
+`inspect_artifacts.sh` (`release-signing.txt` in the evidence records the signer
+certificate, or `unsigned`). A partial set fails the build. Complete the
+runtime/device/store-policy checks before release.
 The wider Android target is still in development; released-dependency consumer
 proof remains required before this generator can be advertised as supported.
 MARKDOWN
