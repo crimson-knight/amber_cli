@@ -121,9 +121,13 @@ describe "Agent E2E: LSP diagnostic feedback loop" do
       # The corrected code:
       #   - Renamed "UsersHandler" → "UsersController" (fixes controller-naming)
       #   - Added render call in index (fixes action-return-type)
+      #   - Declared the return type (fsdd/method-type-signature flags a bare def)
+      #   - Doc comments on the class and the action (fsdd/doc-block-required)
       fixed_code = <<-CRYSTAL
+      # The users a shell lists.
       class UsersController < Amber::Controller::Base
-        def index
+        # Renders the user list.
+        def index : String
           users = ["Alice", "Bob"]
           render("index.ecr")
         end
