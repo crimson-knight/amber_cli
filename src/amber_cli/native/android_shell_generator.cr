@@ -139,6 +139,15 @@ CRYSTAL
         if android.capabilities.notifications
           io << "    <meta-data android:name=\"dev.assetpipeline.notification_channels\" android:resource=\"@xml/ap_notification_channels\" />\n"
         end
+        # The runtime's photo picker captures with the system camera app into a
+        # file under the application's cache directory through this provider
+        # (asset_pipeline docs/android-photos.md); the paths resource ships with
+        # the runtime. Unexported and scoped to that directory, it is declared
+        # for every application, and needs no camera permission: the capability
+        # below is for an application that uses the camera hardware itself.
+        io << "    <provider android:name=\"androidx.core.content.FileProvider\" android:authorities=\"${applicationId}.assetpipeline.photos\" android:exported=\"false\" android:grantUriPermissions=\"true\">\n"
+        io << "      <meta-data android:name=\"android.support.FILE_PROVIDER_PATHS\" android:resource=\"@xml/ap_photo_paths\" />\n"
+        io << "    </provider>\n"
         io << "    <activity android:name=\"dev.amber.generated.MainActivity\" android:exported=\"true\" android:windowSoftInputMode=\"adjustResize\">\n"
         io << "      <intent-filter><action android:name=\"android.intent.action.MAIN\" /><category android:name=\"android.intent.category.LAUNCHER\" /></intent-filter>\n"
         android.deep_links.each do |link|

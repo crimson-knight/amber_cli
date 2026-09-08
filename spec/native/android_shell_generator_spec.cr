@@ -42,6 +42,8 @@ describe AmberCLI::Native::AndroidShellGenerator do
     files["mobile/android/app/build.gradle.kts"].should contain("android/runtime/src/main/res")
     files["mobile/android/app/src/main/java/dev/amber/generated/MainActivity.kt"].should contain("NativeNavigation(this)")
     files["mobile/android/app/src/main/AndroidManifest.xml"].should contain("android:enableOnBackInvokedCallback=\"true\"")
+    files["mobile/android/app/src/main/AndroidManifest.xml"].should contain(%(android:authorities="${applicationId}.assetpipeline.photos"))
+    files["mobile/android/app/src/main/AndroidManifest.xml"].should contain(%(android:resource="@xml/ap_photo_paths"))
     files["src/platform/android/app.cr"].should contain("UI::NavigationStack.new(CounterScreen.new")
     files["src/platform/android/app.cr"].should contain("@@navigation : UI::NavigationStack =")
     files["src/platform/android/app.cr"].should contain("UI::NavigationLink.new(\"Open details\"")
