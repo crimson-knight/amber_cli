@@ -45,6 +45,11 @@ module AmberCLI::Native
       property appearance : AndroidAppearance = AndroidAppearance.new
       property allow_cleartext_traffic : Bool = false
       property allow_backup : Bool = false
+      # A project directory of files the application loads by path (art, fonts,
+      # documents): staged into the APK as assets/ap_bundle and extracted once
+      # per install by the runtime. The same tree the Apple target copies as a
+      # folder reference.
+      property bundled_assets : String? = nil
 
       def initialize(@application_id : String = "")
       end
@@ -77,6 +82,12 @@ module AmberCLI::Native
         raise ArgumentError.new("android.notification_channels supports at most 32 channels") if @notification_channels.size > 32
         @notification_channels.each(&.validate!)
         ensure_unique(@notification_channels.map(&.id), "android.notification_channels")
+        if bundle = @bundled_assets
+          segments = bundle.split('/')
+          if bundle.empty? || bundle.starts_with?('/') || segments.any? { |segment| segment.empty? || segment == "." || segment == ".." }
+            raise ArgumentError.new("android.bundled_assets must be a plain project-relative directory path")
+          end
+        end
         @appearance.validate!
         self
       end

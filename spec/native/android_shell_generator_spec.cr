@@ -53,7 +53,7 @@ describe AmberCLI::Native::AndroidShellGenerator do
     XML.parse(files["src/assets/app_mark.android.xml"]).root.not_nil!.name.should eq("vector")
     files["src/platform/android/app.cr"].should contain(%(UI::Image.new("app_mark")))
     files["mobile/android/app/build.gradle.kts"].should contain("compile_android_assets.cr")
-    files["mobile/android/app/build.gradle.kts"].should contain("dependsOn(buildCrystal, compileImages)")
+    files["mobile/android/app/build.gradle.kts"].should contain("dependsOn(buildCrystal, compileImages, stageBundle)")
     files["mobile/android/app/src/main/java/dev/amber/generated/MainActivity.kt"].should contain("CrystalBridge.detachHost(this)")
     files["mobile/android/android.sh"].should contain(":app:testDebugUnitTest")
     files["mobile/android/android.sh"].should contain("LayoutPolicyTest")
@@ -137,5 +137,18 @@ describe AmberCLI::Native::AndroidShellGenerator do
       File.read(File.join(project, "src/app/counter.cr")).should contain("amber/native")
       File.read(File.join(project, "shard.yml")).should_not contain("grant:")
     end
+  end
+  it "stages a bundled assets directory into the APK and refuses paths that leave the project" do
+    manifest = AmberCLI::Native::CapabilityManifest.default_for("counter")
+    AmberCLI::Native::AndroidShellGenerator.new(manifest, "counter").files["mobile/android/android-app.properties"].should match(/\nbundledAssets=\z/)
+    manifest.android.not_nil!.bundled_assets = "mobile/ios/HappyCoachAssets/assets"
+    generator = AmberCLI::Native::AndroidShellGenerator.new(manifest, "counter")
+    generator.files["mobile/android/android-app.properties"].should match(/\nbundledAssets=mobile\/ios\/HappyCoachAssets\/assets\z/)
+    generator.files["mobile/android/app/build.gradle.kts"].should contain(%(assets.srcDir(stagedBundle)))
+    generator.files["mobile/android/app/build.gradle.kts"].should contain(%(it.dir("ap_bundle")))
+    manifest.android.not_nil!.bundled_assets = "../outside"
+    expect_raises(ArgumentError, /bundled_assets/) { manifest.android.not_nil!.validate! }
+    manifest.android.not_nil!.bundled_assets = "/absolute"
+    expect_raises(ArgumentError, /bundled_assets/) { manifest.android.not_nil!.validate! }
   end
 end

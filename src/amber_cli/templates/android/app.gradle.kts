@@ -21,6 +21,19 @@ val toolchain = Properties().apply {
 val app = Properties().apply {
     rootProject.file("android-app.properties").inputStream().use { load(it) }
 }
+// Bundled files (art, fonts, documents) the application loads by path.
+// android.bundled_assets in config/native.yml names a project directory that
+// is staged into the APK as assets/ap_bundle and extracted once per install
+// by the runtime (lib/asset_pipeline/docs/android-assets.md). Without it the
+// staged directory is empty and the APK carries no bundle.
+val bundledAssets = app.getProperty("bundledAssets")?.takeIf { it.isNotBlank() }
+val stagedBundle = layout.buildDirectory.dir("generated/assetPipelineBundle")
+val stageBundle by tasks.registering(Sync::class) {
+    group = "build"
+    description = "Stage the application's bundled files into the APK's assets."
+    if (bundledAssets != null) from(nativeAssetRoot.resolve(bundledAssets))
+    into(stagedBundle.map { it.dir("ap_bundle") })
+}
 val buildCrystal by tasks.registering(Exec::class) {
     group = "build"
     description = "Build the application's Crystal runtime for every selected Android ABI."
@@ -81,10 +94,11 @@ android {
     sourceSets.getByName("main").java.srcDir(assetPipeline.resolve("android/runtime/src/main/java"))
     sourceSets.getByName("main").res.srcDir(assetPipeline.resolve("android/runtime/src/main/res"))
     sourceSets.getByName("main").res.srcDir(generatedImages.map { it.dir("res") })
+    sourceSets.getByName("main").assets.srcDir(stagedBundle)
     sourceSets.getByName("test").java.srcDir(assetPipeline.resolve("android/runtime/src/test/java"))
     sourceSets.getByName("androidTest").java.srcDir(assetPipeline.resolve("android/runtime/src/androidTest/java"))
 }
-tasks.matching { it.name == "preBuild" }.configureEach { dependsOn(buildCrystal, compileImages) }
+tasks.matching { it.name == "preBuild" }.configureEach { dependsOn(buildCrystal, compileImages, stageBundle) }
 dependencies {
     testImplementation("junit:junit:4.13.2")
     implementation("androidx.core:core-ktx:1.15.0")

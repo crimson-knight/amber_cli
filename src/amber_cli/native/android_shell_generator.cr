@@ -75,6 +75,7 @@ versionCode=#{app.build_number}
 versionName=#{properties_value(app.version)}
 internetPermission=#{android.declared_permissions.includes?("android.permission.INTERNET")}
 notificationPermission=#{android.declared_permissions.includes?("android.permission.POST_NOTIFICATIONS")}
+bundledAssets=#{android.bundled_assets || ""}
 PROPERTIES
       outputs["mobile/android/app/src/main/AndroidManifest.xml"] = android_manifest
       outputs["mobile/android/app/src/main/res/values/strings.xml"] = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<resources><string name=\"app_name\" formatted=\"false\">#{android_string(app.display_name)}</string></resources>\n"
