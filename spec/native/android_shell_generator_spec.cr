@@ -146,6 +146,8 @@ describe AmberCLI::Native::AndroidShellGenerator do
     generator.files["mobile/android/android-app.properties"].should match(/\nbundledAssets=mobile\/ios\/HappyCoachAssets\/assets\z/)
     generator.files["mobile/android/app/build.gradle.kts"].should contain(%(assets.srcDir(stagedBundle)))
     generator.files["mobile/android/app/build.gradle.kts"].should contain(%(it.dir("ap_bundle")))
+    generator.files["mobile/android/app/build.gradle.kts"].should contain(%(providers.gradleProperty("amberDebugTrustedCa")))
+    generator.files["mobile/android/app/build.gradle.kts"].should contain(%(dependsOn(prepareDebugTrust)))
     manifest.android.not_nil!.bundled_assets = "../outside"
     expect_raises(ArgumentError, /bundled_assets/) { manifest.android.not_nil!.validate! }
     manifest.android.not_nil!.bundled_assets = "/absolute"

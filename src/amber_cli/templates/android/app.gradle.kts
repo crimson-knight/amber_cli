@@ -40,6 +40,43 @@ val buildCrystal by tasks.registering(Exec::class) {
     workingDir = rootProject.projectDir
     commandLine("bash", rootProject.file("build_crystal_lib.sh").absolutePath)
 }
+// Debug-only trust for a local HTTPS proof over adb reverse. The Gradle
+// property amberDebugTrustedCa names a public CA certificate and the
+// environment's AMBER_ANDROID_DEBUG_ORIGIN must be an explicit
+// https://localhost:<port>; both are generated into debug-only inputs. No
+// application or release source contains a certificate, a key or a
+// permissive trust manager.
+val debugTrustedCa = providers.gradleProperty("amberDebugTrustedCa").orNull
+val debugTrust = layout.buildDirectory.dir("generated/amberDebugTrust")
+val prepareDebugTrust by tasks.registering {
+    onlyIf { debugTrustedCa != null }
+    outputs.upToDateWhen { false }
+    doLast {
+        require(System.getenv("AMBER_ANDROID_DEBUG_ORIGIN")?.matches(Regex("https://localhost:[0-9]{1,5}")) == true) {
+            "Debug trust requires an explicit localhost HTTPS proof origin in AMBER_ANDROID_DEBUG_ORIGIN"
+        }
+        val certificate = File(requireNotNull(debugTrustedCa)).readText()
+        require(certificate.toByteArray().size <= 32768 && certificate.contains("BEGIN CERTIFICATE") &&
+            !certificate.contains("PRIVATE KEY")) { "Supply a public CA certificate, never a private key" }
+        val output = debugTrust.get().asFile
+        output.resolve("res/raw").mkdirs()
+        output.resolve("res/xml").mkdirs()
+        output.resolve("res/raw/amber_debug_ca.pem").writeText(certificate)
+        output.resolve("res/xml/amber_debug_network_security.xml").writeText("""
+            <network-security-config>
+              <base-config cleartextTrafficPermitted="false"><trust-anchors><certificates src="system" /></trust-anchors></base-config>
+              <domain-config cleartextTrafficPermitted="false"><domain includeSubdomains="false">localhost</domain>
+                <trust-anchors><certificates src="@raw/amber_debug_ca" /></trust-anchors>
+              </domain-config>
+            </network-security-config>
+        """.trimIndent())
+        output.resolve("AndroidManifest.xml").writeText("""
+            <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application android:networkSecurityConfig="@xml/amber_debug_network_security" />
+            </manifest>
+        """.trimIndent())
+    }
+}
 // Release signing comes from the environment, never from source control.
 // AMBER_ANDROID_KEYSTORE (path), AMBER_ANDROID_KEYSTORE_PASSWORD,
 // AMBER_ANDROID_KEY_ALIAS and AMBER_ANDROID_KEY_PASSWORD together sign the
@@ -95,10 +132,15 @@ android {
     sourceSets.getByName("main").res.srcDir(assetPipeline.resolve("android/runtime/src/main/res"))
     sourceSets.getByName("main").res.srcDir(generatedImages.map { it.dir("res") })
     sourceSets.getByName("main").assets.srcDir(stagedBundle)
+    if (debugTrustedCa != null) {
+        sourceSets.getByName("debug").res.srcDir(debugTrust.map { it.dir("res") })
+        sourceSets.getByName("debug").manifest.srcFile(debugTrust.map { it.file("AndroidManifest.xml") })
+    }
     sourceSets.getByName("test").java.srcDir(assetPipeline.resolve("android/runtime/src/test/java"))
     sourceSets.getByName("androidTest").java.srcDir(assetPipeline.resolve("android/runtime/src/androidTest/java"))
 }
 tasks.matching { it.name == "preBuild" }.configureEach { dependsOn(buildCrystal, compileImages, stageBundle) }
+tasks.matching { it.name == "preDebugBuild" }.configureEach { dependsOn(prepareDebugTrust) }
 dependencies {
     testImplementation("junit:junit:4.13.2")
     implementation("androidx.core:core-ktx:1.15.0")
