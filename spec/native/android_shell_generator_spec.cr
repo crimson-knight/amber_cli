@@ -153,4 +153,14 @@ describe AmberCLI::Native::AndroidShellGenerator do
     manifest.android.not_nil!.bundled_assets = "/absolute"
     expect_raises(ArgumentError, /bundled_assets/) { manifest.android.not_nil!.validate! }
   end
+  it "emits an empty host settings resource and registers it with the runtime before Crystal starts" do
+    manifest = AmberCLI::Native::CapabilityManifest.default_for("counter")
+    files = AmberCLI::Native::AndroidShellGenerator.new(manifest, "counter").files
+    settings = files["mobile/android/app/src/main/res/values/host_settings.xml"]
+    XML.parse(settings).xpath_string("string(//string[@name='ap_host_settings'])").should eq("")
+    settings.should contain(%(translatable="false"))
+    activity = files["mobile/android/app/src/main/java/dev/amber/generated/MainActivity.kt"]
+    activity.should contain("import dev.assetpipeline.androidhost.HostSettings")
+    activity.index("HostSettings.registerSerialized(getString(R.string.ap_host_settings))").not_nil!.should be < activity.index("CrystalBridge.initialize(").not_nil!
+  end
 end

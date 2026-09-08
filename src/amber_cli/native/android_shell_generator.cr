@@ -79,6 +79,7 @@ bundledAssets=#{android.bundled_assets || ""}
 PROPERTIES
       outputs["mobile/android/app/src/main/AndroidManifest.xml"] = android_manifest
       outputs["mobile/android/app/src/main/res/values/strings.xml"] = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<resources><string name=\"app_name\" formatted=\"false\">#{android_string(app.display_name)}</string></resources>\n"
+      outputs["mobile/android/app/src/main/res/values/host_settings.xml"] = host_settings
       outputs["mobile/android/app/src/main/res/values/styles.xml"] = styles
       outputs["mobile/android/app/src/main/res/values/colors.xml"] = colors(false)
       outputs["mobile/android/app/src/main/res/values-night/colors.xml"] = colors(true)
@@ -193,6 +194,19 @@ CRYSTAL
 
     private def properties_value(value : String) : String
       value.gsub('\\', "\\\\").gsub('\n', "\\n").gsub('\r', "\\r").gsub('\t', "\\t")
+    end
+
+    # The host settings the application reads at startup through
+    # `UI::Android::Application.setting` (lib/asset_pipeline/docs/android-settings.md):
+    # one KEY=value per line inside one string resource, empty in a fresh
+    # project. A release step writes the customer's values here, the way an
+    # iOS archive bakes them into Info.plist, and the generated activity
+    # registers the text with the runtime before Crystal starts.
+    private def host_settings : String
+      <<-XML
+      <?xml version="1.0" encoding="utf-8"?>
+      <resources><string name="ap_host_settings" formatted="false" translatable="false"></string></resources>
+      XML
     end
 
     private def styles : String

@@ -10,6 +10,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import dev.assetpipeline.androidhost.CrystalBridge
+import dev.assetpipeline.androidhost.HostSettings
 import dev.assetpipeline.androidhost.NativeNavigation
 import dev.assetpipeline.androidhost.NativeScreenHost
 import dev.assetpipeline.androidhost.NativeSemantics
@@ -42,6 +43,7 @@ class MainActivity : AppCompatActivity() {
             insets
         }
         ViewCompat.requestApplyInsets(scroll)
+        HostSettings.registerSerialized(getString(R.string.ap_host_settings))
         CrystalBridge.initialize("asset_pipeline_app", applicationContext)
         CrystalBridge.attachHost(this)
         navigation = NativeNavigation(this)
