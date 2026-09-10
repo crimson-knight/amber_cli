@@ -95,7 +95,7 @@ MARKDOWN
     commit: ab90eae910a4bd3a74f3f52ba8dfe238817994c3
   asset_pipeline:
     github: crimson-knight/asset_pipeline
-    commit: dcec15a37be3bdf8fff3c39026ddcfae46dab154
+    commit: 64ac6042de87a4d8911c51f3c1ff82f41765d3b6
 YAML
       end
     end

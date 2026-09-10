@@ -44,7 +44,9 @@ describe "Generated Android application lane" do
 
   it "builds the CLI, checks out the AssetPipeline commit the generator pins, and proves a released-mode generated app on the shard's launcher" do
     runs = steps.compact_map { |step| step["run"]?.try(&.as_s) }.join("\n")
+    runs.should contain("shards install --without-development")
     runs.should contain("crystal build src/amber_cli.cr --no-debug -o build/amber")
+    runs.should contain("mkdir -p build/generated-ci")
     runs.should contain("src/amber_cli/generators/hybrid_app.cr")
     runs.should contain("git clone --quiet https://github.com/crimson-knight/asset_pipeline.git build/asset_pipeline")
     runs.should contain("source build/asset_pipeline/config/android_toolchain.env")
