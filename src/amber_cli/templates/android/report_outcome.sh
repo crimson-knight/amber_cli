@@ -70,6 +70,17 @@ gh_run() {
   gh "$@"
 }
 
+require_issues() {
+  # A fork has issues off by default; without them nothing here can file.
+  [ "$dry_run" = "1" ] && return 0
+  local enabled
+  enabled="$(gh api "repos/${repository}" --jq '.has_issues' 2>/dev/null || echo unknown)"
+  if [ "$enabled" != "true" ]; then
+    echo "report_outcome: issues are disabled on ${repository} (has_issues=${enabled}); enable them with: gh repo edit ${repository} --enable-issues" >&2
+    return 1
+  fi
+}
+
 ensure_labels() {
   # --force updates an existing label instead of failing, so this is idempotent.
   gh_run label create "$failure_label" -R "$repository" --force \
@@ -132,6 +143,7 @@ create_issue() {
 
 case "$outcome" in
   failure)
+    require_issues
     ensure_labels
     existing="$(open_issue_number)"
     if [ -n "$existing" ]; then
@@ -144,6 +156,7 @@ case "$outcome" in
     fi
     ;;
   success)
+    require_issues
     existing="$(open_issue_number)"
     if [ -n "$existing" ]; then
       body="$(printf 'Recovered.\n\n'; context_lines; printf '\nClosing; a later failure opens a new issue.\n')"
