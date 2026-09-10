@@ -62,6 +62,13 @@ for suite in HttpWireTest PlatformHttpTest SecretVaultTest FilePolicyTest Notifi
   cp "$report" "$evidence/$suite.xml"
 done
 log_start="$("$adb" -s "$serial" shell "date '+%m-%d %H:%M:%S.000'" | tr -d '\r')"
+# Stream the log from here on: a slow emulator writes enough during the suite to
+# wrap its buffer, and a dump taken afterward would no longer hold the runtime's
+# load line. The streamed file plus a final dump is what every check reads.
+"$adb" -s "$serial" logcat -v threadtime -T "$log_start" > "$evidence/logcat-live.txt" 2> "$evidence/logcat-capture-stderr.txt" &
+live_logcat_pid=$!
+stop_live_logcat() { kill "$live_logcat_pid" 2>/dev/null || true; wait "$live_logcat_pid" 2>/dev/null || true; }
+trap stop_live_logcat EXIT
 "$adb" -s "$serial" shell am instrument -w -r -e class dev.amber.generated.NativeApplicationTest,dev.assetpipeline.androidhost.StoragePlatformTest,dev.assetpipeline.androidhost.SecretsPlatformTest,dev.assetpipeline.androidhost.FilesPlatformTest \
   "$app_id.test/androidx.test.runner.AndroidJUnitRunner" > "$evidence/instrumentation.txt" 2>&1
 if ! grep -Eq '^OK \([1-9][0-9]* tests?\)' "$evidence/instrumentation.txt" ||
@@ -69,7 +76,8 @@ if ! grep -Eq '^OK \([1-9][0-9]* tests?\)' "$evidence/instrumentation.txt" ||
     grep -Eq 'Process crashed|FAILURES!!!|INSTRUMENTATION_FAILED|INSTRUMENTATION_STATUS_CODE: -[1234]' "$evidence/instrumentation.txt"; then
   echo "Android instrumentation failed; inspect $evidence" >&2; exit 1
 fi
-"$adb" -s "$serial" logcat -d -v threadtime -T "$log_start" > "$evidence/logcat.txt"
+"$adb" -s "$serial" logcat -d -v threadtime -T "$log_start" > "$evidence/logcat-tail.txt"
+cat "$evidence/logcat-live.txt" "$evidence/logcat-tail.txt" > "$evidence/logcat.txt"
 grep -q 'Crystal runtime ready (probe=42)' "$evidence/logcat.txt"
 grep -q 'Late-enabling -Xcheck:jni' "$evidence/logcat.txt"
 awk '/AssetPipelineNative: JNI_OnLoad: starting/ { pids[$3] = 1 }
@@ -94,7 +102,7 @@ if ! grep -Eq '^OK \([1-9][0-9]* tests?\)' "$evidence/restoration-instrumentatio
 fi
 restored_pid="$(sed -n 's/^INSTRUMENTATION_STATUS: restored_process=//p' "$evidence/restoration-instrumentation.txt" | tr -d '\r')"
 [[ "$restored_pid" =~ ^[0-9]+$ && "$restored_pid" != "$previous_pid" ]]
-"$adb" -s "$serial" logcat -d -v threadtime -T "$log_start" --pid="$restored_pid" > "$evidence/restoration-logcat.txt"
+{ awk -v pid="$restored_pid" '$3 == pid' "$evidence/logcat-live.txt"; "$adb" -s "$serial" logcat -d -v threadtime -T "$log_start" --pid="$restored_pid"; } > "$evidence/restoration-logcat.txt"
 grep -q 'Crystal runtime ready (probe=42)' "$evidence/restoration-logcat.txt"
 if grep -Eq 'JNI DETECTED ERROR|FATAL EXCEPTION|Fatal signal|Crystal (bootstrap|render|application) error|Crystal .*callback failed|Cannot enter Crystal' "$evidence/restoration-logcat.txt"; then
   echo "Restoration process failed; inspect $evidence" >&2; exit 1
@@ -110,7 +118,7 @@ grep -q 'Restored from local storage.' "$evidence/relaunch-ui.xml"
 relaunch_pid="$(tr -d '\r\n' < "$evidence/relaunch-pid.txt")"
 [[ "$relaunch_pid" =~ ^[0-9]+$ ]]
 [[ "$relaunch_pid" != "$previous_pid" ]] || { echo "Persistence test did not start a new process" >&2; exit 1; }
-"$adb" -s "$serial" logcat -d -v threadtime -T "$log_start" --pid="$relaunch_pid" > "$evidence/relaunch-logcat.txt"
+{ awk -v pid="$relaunch_pid" '$3 == pid' "$evidence/logcat-live.txt"; "$adb" -s "$serial" logcat -d -v threadtime -T "$log_start" --pid="$relaunch_pid"; } > "$evidence/relaunch-logcat.txt"
 grep -q 'Crystal runtime ready (probe=42)' "$evidence/relaunch-logcat.txt"
 if grep -Eq 'JNI DETECTED ERROR|FATAL EXCEPTION|Fatal signal|Crystal (bootstrap|render|application) error|Crystal .*callback failed|Cannot enter Crystal' "$evidence/relaunch-logcat.txt"; then
   echo "Relaunched Android process failed; inspect $evidence" >&2; exit 1

@@ -1,5 +1,6 @@
 require "../amber_cli_spec"
 require "xml"
+require "yaml"
 require "../../src/amber_cli/native/android_shell_generator"
 require "../../src/amber_cli/generators/hybrid_app"
 
@@ -40,6 +41,10 @@ describe AmberCLI::Native::AndroidShellGenerator do
     files["mobile/android/app/src/main/java/dev/amber/generated/MainActivity.kt"].should contain("NativeScreenHost(this, mount, scroll, savedInstanceState)")
     files["mobile/android/app/src/main/java/dev/amber/generated/MainActivity.kt"].should contain("screenHost.saveState(outState)")
     files["mobile/android/app/build.gradle.kts"].should contain("android/runtime/src/main/res")
+    # The device suite streams logcat from its start; a dump taken afterward loses the
+    # runtime's load line once a slow emulator wraps its buffer.
+    files["mobile/android/android.sh"].should contain("logcat-live.txt")
+    files["mobile/android/android.sh"].should contain("trap stop_live_logcat EXIT")
     files["mobile/android/app/src/main/java/dev/amber/generated/MainActivity.kt"].should contain("NativeNavigation(this)")
     files["mobile/android/app/src/main/AndroidManifest.xml"].should contain("android:enableOnBackInvokedCallback=\"true\"")
     files["mobile/android/app/src/main/AndroidManifest.xml"].should contain(%(android:authorities="${applicationId}.assetpipeline.photos"))
@@ -164,5 +169,52 @@ describe AmberCLI::Native::AndroidShellGenerator do
     activity = files["mobile/android/app/src/main/java/dev/amber/generated/MainActivity.kt"]
     activity.should contain("import dev.assetpipeline.androidhost.HostSettings")
     activity.index("HostSettings.registerSerialized(getString(R.string.ap_host_settings))").not_nil!.should be < activity.index("CrystalBridge.initialize(").not_nil!
+  end
+  it "emits a continuous Android lane that reads the shard's pins, owns its emulator and reports failures as an issue" do
+    manifest = AmberCLI::Native::CapabilityManifest.default_for("counter")
+    generator = AmberCLI::Native::AndroidShellGenerator.new(manifest, "counter")
+    files = generator.files
+    android = manifest.android.not_nil!
+    generator.ci_matrix.should eq([android.minimum_sdk.to_s, android.target_sdk.to_s, AmberCLI::Native::AndroidShellGenerator::NEWEST_SUPPORTED_ANDROID_RUNTIME].uniq.sort_by(&.to_f))
+    workflow = YAML.parse(files[".github/workflows/android-native.yml"])
+    native = workflow["jobs"]["native"]
+    native["strategy"]["matrix"]["api"].as_a.map(&.as_s).should eq(generator.ci_matrix)
+    native["strategy"]["fail-fast"].as_bool.should be_false
+    workflow["on"].as_h.keys.map(&.as_s).sort.should eq(["pull_request", "push", "schedule", "workflow_dispatch"])
+    workflow["on"]["schedule"].as_a.first["cron"].as_s.should match(/\A\d{1,2} \d{1,2} \* \* \*\z/)
+    workflow["permissions"].as_h.size.should eq(1)
+    workflow["permissions"]["contents"].as_s.should eq("read")
+    steps = native["steps"].as_a
+    steps.each { |step| step["continue-on-error"]?.should be_nil }
+    workflow["jobs"].as_h.each_value do |job|
+      job["steps"].as_a.each do |step|
+        if action = step["uses"]?.try(&.as_s)
+          action.should match(/\A[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+@[0-9a-f]{40}\z/)
+        end
+      end
+    end
+    steps.find { |step| step["name"].as_s == "Install Crystal" }.not_nil!["with"]["crystal"].as_s.should eq(AmberCLI::Native::AndroidShellGenerator::CRYSTAL_VERSION)
+    runs = steps.compact_map { |step| step["run"]?.try(&.as_s) }.join("\n")
+    runs.should contain("source lib/asset_pipeline/config/android_toolchain.env")
+    runs.should contain("bash lib/asset_pipeline/scripts/doctor_android.sh")
+    runs.should contain(%(bash lib/asset_pipeline/scripts/ci/android_emulator.sh run "$ANDROID_RUNTIME_API" 5554 -- bash mobile/android/android.sh test emulator-5554))
+    runs.should contain("crystal spec --error-trace")
+    runs.should contain("git diff --exit-code")
+    runs.should_not contain("|| true")
+    gate = steps.find { |step| step["name"].as_s == "Build, install and test on the emulator" }.not_nil!
+    gate["env"]["ANDROID_RUNTIME_API"].as_s.should eq("${{ matrix.api }}")
+    gate["env"]["ANDROID_API"]?.should be_nil
+    gate["env"]["EMULATOR_ARCH"].as_s.should eq("x86_64")
+    report = workflow["jobs"]["report"]
+    report["needs"].as_s.should eq("native")
+    report["if"].as_s.should eq("always() && github.event_name != 'pull_request'")
+    report["permissions"]["issues"].as_s.should eq("write")
+    reporter = report["steps"].as_a.find { |step| step["run"]?.try(&.as_s) == "bash .github/scripts/report_outcome.sh" }.not_nil!
+    reporter["env"]["LANE"].as_s.should eq("android-native")
+    reporter["env"]["MAINTAINERS"].as_s.should eq("${{ vars.CI_MAINTAINERS }}")
+    reporter["env"]["OUTCOME"].as_s.should eq("${{ needs.native.result }}")
+    files[".github/scripts/report_outcome.sh"].should start_with("#!/usr/bin/env bash")
+    files[".github/scripts/report_outcome.sh"].should contain(%(lane_label="lane:${lane}"))
+    files["mobile/android/README.md"].should contain(".github/workflows/android-native.yml")
   end
 end

@@ -9,6 +9,16 @@ module AmberCLI::Native
   class AndroidShellGenerator
     WRAPPER_SHA256      = "b3a875ddc1f044746e1b1a55f645584505f4a10438c1afea9f15e92a7c42ec13"
     DISTRIBUTION_SHA256 = "b266d5ff6b90eada6dc3b20cb090e3731302e553a27c5d3e4df1f0d76beaff06"
+    # The Crystal the generated lane installs before it can read the shard's pins;
+    # matches CRYSTAL_ANDROID_VERSION in the pinned AssetPipeline.
+    CRYSTAL_VERSION = "1.21.0"
+    # The newest supported Android runtime at this CLI's release, the ceiling of
+    # AssetPipeline's own pull-request gate: the generated lane exercises it beside
+    # the app's floor and target, as a string, because Android names minor SDK
+    # releases (36.1, 37.0). The newest released runtime is AssetPipeline's
+    # android-next lane to prove first, not every generated app's.
+    NEWEST_SUPPORTED_ANDROID_RUNTIME = "36"
+    REPORTER = {{ read_file("#{__DIR__}/../templates/android/report_outcome.sh") }}
     TEMPLATES           = {
       "mobile/android/settings.gradle.kts"                                                   => {{ read_file("#{__DIR__}/../templates/android/settings.gradle.kts") }},
       "mobile/android/build.gradle.kts"                                                      => {{ read_file("#{__DIR__}/../templates/android/build.gradle.kts") }},
@@ -121,6 +131,8 @@ end
 CRYSTAL
       outputs["mobile/android/test_android.sh"] = "#!/usr/bin/env bash\nset -euo pipefail\nexec bash \"$(dirname \"$0\")/android.sh\" test \"$@\"\n"
       outputs["mobile/android/.gitignore"] = "/.gradle/\n/build/\n/app/build/\n/app/src/main/jniLibs/\n/local.properties\n"
+      outputs[".github/workflows/android-native.yml"] = ci_workflow
+      outputs[".github/scripts/report_outcome.sh"] = REPORTER
       outputs["mobile/android/README.md"] = readme
       outputs
     end
@@ -256,6 +268,189 @@ XML
 XML
     end
 
+    # The runtime API levels the generated lane exercises: the app's own floor
+    # and target from config/native.yml, plus the newest released runtime.
+    def ci_matrix : Array(String)
+      [android.minimum_sdk.to_s, android.target_sdk.to_s, NEWEST_SUPPORTED_ANDROID_RUNTIME].uniq.sort_by(&.to_f)
+    end
+
+    # The generated application's continuous Android lane. It reads every
+    # toolchain pin from the installed AssetPipeline shard, owns its emulator
+    # through the shard's launcher, runs the app's own device suite, and
+    # reports a failing scheduled, dispatched or push run as one issue that
+    # tags the maintainers (the repository variable CI_MAINTAINERS, or the
+    # repository owner). Pull requests carry their own checks.
+    def ci_workflow : String
+      matrix = ci_matrix.map { |api| "'#{api}'" }.join(", ")
+      <<-YAML
+      name: Android native validation
+
+      'on':
+        workflow_dispatch:
+          inputs:
+            report_selftest:
+              description: 'Also open and close a self-test issue (lane:selftest) to prove the reporter tags the maintainers'
+              type: boolean
+              default: false
+        schedule:
+          # Nightly. GitHub runs scheduled workflows from the default branch only.
+          - cron: '23 6 * * *'
+        pull_request:
+        push:
+          branches: [main]
+
+      permissions:
+        contents: read
+
+      concurrency:
+        group: android-native-${{ github.ref }}
+        cancel-in-progress: true
+
+      jobs:
+        native:
+          name: Native Android API ${{ matrix.api }}
+          runs-on: ubuntu-24.04
+          timeout-minutes: 60
+          strategy:
+            fail-fast: false
+            matrix:
+              # The app's floor and target (config/native.yml) and the newest
+              # supported runtime, as strings: Android names minor SDK releases.
+              api: [#{matrix}]
+          env:
+            CRYSTAL_CACHE_DIR: ${{ github.workspace }}/build/crystal-cache/android-ci
+            CRYSTAL_CROSS_DEPS: ${{ github.workspace }}/build/android-deps
+            ANDROID_TEST_EVIDENCE: ${{ github.workspace }}/build/android-ci/evidence
+            JOBS: '2'
+          steps:
+            - name: Checkout
+              uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+              with:
+                persist-credentials: false
+            - name: Install Crystal
+              uses: crystal-lang/install-crystal@d8ef131ecec0352ce0e39b81b0a6d95def58fe2f # v1 branch
+              with:
+                crystal: '#{CRYSTAL_VERSION}'
+            - name: Shards install
+              shell: bash
+              run: shards install
+            - name: Read the toolchain pins from the AssetPipeline shard
+              id: pins
+              shell: bash
+              run: |
+                source lib/asset_pipeline/config/android_toolchain.env
+                printf 'java=%s\\n' "$ANDROID_JAVA_VERSION" >> "$GITHUB_OUTPUT"
+            - name: Install Java
+              uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+              with:
+                distribution: temurin
+                java-version: ${{ steps.pins.outputs.java }}
+            - name: Install Android SDK tools
+              uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+              with:
+                packages: platform-tools
+                log-accepted-android-sdk-licenses: false
+            - name: Install native build prerequisites and the pinned SDK packages
+              shell: bash
+              run: |
+                sudo apt-get update
+                sudo apt-get install -y build-essential clang cmake autoconf automake libtool pkg-config libgc-dev libevent-dev libpcre2-dev libssl-dev libxml2-dev libyaml-dev zlib1g-dev
+                source lib/asset_pipeline/config/android_toolchain.env
+                sdkmanager "platforms;android-$ANDROID_COMPILE_SDK" "build-tools;$ANDROID_BUILD_TOOLS_VERSION" "ndk;$ANDROID_NDK_VERSION"
+                bash lib/asset_pipeline/scripts/doctor_android.sh
+            - name: Require hardware acceleration
+              shell: bash
+              run: |
+                test -c /dev/kvm
+                echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+                sudo udevadm control --reload-rules
+                sudo udevadm trigger --name-match=kvm
+                for _ in 1 2 3 4 5 6 7 8 9 10; do
+                  if test -r /dev/kvm && test -w /dev/kvm; then exit 0; fi
+                  sleep 1
+                done
+                sudo chmod 0666 /dev/kvm
+                test -r /dev/kvm && test -w /dev/kvm
+            - name: Shared specs
+              shell: bash
+              run: crystal spec --error-trace
+            - name: Build, install and test on the emulator
+              # The shard's launcher: the same image, cores, memory and options
+              # AssetPipeline's own lane uses; it waits for the input service,
+              # runs the app's device suite, and always tears the emulator down.
+              shell: bash
+              env:
+                ANDROID_RUNTIME_API: ${{ matrix.api }}
+                EMULATOR_TARGET: google_apis
+                EMULATOR_ARCH: x86_64
+                EMULATOR_PROFILE: pixel_6
+                EMULATOR_CORES: '4'
+                EMULATOR_RAM_MB: '4096'
+                EMULATOR_HEAP_MB: '1024'
+                EMULATOR_BOOT_TIMEOUT: '900'
+                EMULATOR_LOG_DIR: build/android-ci/emulator
+              run: bash lib/asset_pipeline/scripts/ci/android_emulator.sh run "$ANDROID_RUNTIME_API" 5554 -- bash mobile/android/android.sh test emulator-5554
+            - name: Verify tracked sources were not rewritten
+              run: git diff --exit-code
+            - name: Retain evidence and packages, including failures
+              if: always()
+              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+              with:
+                name: android-native-api-${{ matrix.api }}
+                retention-days: 14
+                if-no-files-found: error
+                path: |
+                  build/android-ci/
+                  mobile/android/app/build/outputs/apk/
+                  mobile/android/app/build/outputs/bundle/
+        report:
+          name: Report the outcome
+          needs: native
+          if: always() && github.event_name != 'pull_request'
+          runs-on: ubuntu-24.04
+          timeout-minutes: 10
+          permissions:
+            contents: read
+            issues: write
+          steps:
+            - name: Checkout
+              uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+              with:
+                persist-credentials: false
+            - name: Open, update or close the lane's issue
+              shell: bash
+              env:
+                GH_TOKEN: ${{ github.token }}
+                OUTCOME: ${{ needs.native.result }}
+                LANE: android-native
+                WORKFLOW_NAME: ${{ github.workflow }}
+                RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+                REPOSITORY: ${{ github.repository }}
+                MAINTAINERS: ${{ vars.CI_MAINTAINERS }}
+                EVENT_NAME: ${{ github.event_name }}
+                REF_NAME: ${{ github.ref_name }}
+                SHA: ${{ github.sha }}
+              run: bash .github/scripts/report_outcome.sh
+            - name: Reporter self-test (dispatch input only)
+              if: github.event_name == 'workflow_dispatch' && inputs.report_selftest
+              shell: bash
+              env:
+                GH_TOKEN: ${{ github.token }}
+                LANE: selftest
+                WORKFLOW_NAME: ${{ github.workflow }} (reporter self-test)
+                RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+                REPOSITORY: ${{ github.repository }}
+                MAINTAINERS: ${{ vars.CI_MAINTAINERS }}
+                EVENT_NAME: ${{ github.event_name }}
+                REF_NAME: ${{ github.ref_name }}
+                SHA: ${{ github.sha }}
+              run: |
+                OUTCOME=failure bash .github/scripts/report_outcome.sh
+                OUTCOME=success bash .github/scripts/report_outcome.sh
+
+      YAML
+    end
+
     private def readme : String
       <<-MARKDOWN
 # Android application
@@ -298,6 +493,18 @@ Storage interface. It restores validated state before enabling its controls and
 refuses to overwrite an invalid stored snapshot. This is not secret storage.
 Save/load results return asynchronously on the main thread; the app explicitly
 requests a deferred refresh after a state change.
+
+`.github/workflows/android-native.yml` is the app's continuous Android lane:
+on every pull request, push to `main`, nightly, and on dispatch it installs
+the pinned Crystal, reads every toolchain pin from the installed AssetPipeline
+shard, boots its own emulator through the shard's launcher for the app's
+floor, its target and the newest released runtime, and runs
+`mobile/android/android.sh test`. A failing scheduled, dispatched or push run
+opens one issue labeled `ci-failure` that tags the maintainers (set the
+repository variable `CI_MAINTAINERS` to a list of handles; the repository
+owner otherwise), comments while the failure persists, and closes on
+recovery (`.github/scripts/report_outcome.sh`, copied from AssetPipeline).
+GitHub runs the schedule from the default branch only.
 
 For HTTP APIs, explicitly enable the network capability in the manifest and use
 `require "amber/native/android_http"` with `Amber::Native::Android::HTTPClient`.

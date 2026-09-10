@@ -468,3 +468,37 @@ Tests mutate the demo's existing counter/name without clearing its database.
 Use a dedicated development app ID, not an app holding important user data.
 The native artifact inspector now requires the service/lifecycle exports too.
 See the complete storage checkpoint for receipts, limitations and remaining work.
+
+## Continuous lanes (2026-09-10)
+
+Every generated application carries `.github/workflows/android-native.yml`
+and `.github/scripts/report_outcome.sh`. The lane runs on every pull request,
+push to `main`, nightly (GitHub runs schedules from the default branch only)
+and on dispatch: it installs the Crystal the generator names
+(`AndroidShellGenerator::CRYSTAL_VERSION`), installs the shards, reads every
+toolchain pin from `lib/asset_pipeline/config/android_toolchain.env`, runs
+the AssetPipeline doctor, boots its own emulator through
+`lib/asset_pipeline/scripts/ci/android_emulator.sh` for the app's floor, its
+target (`config/native.yml`) and the newest supported runtime
+(`AndroidShellGenerator::NEWEST_SUPPORTED_ANDROID_RUNTIME`, `36`, the ceiling of
+AssetPipeline's own gate; the newest released runtime is AssetPipeline's
+`android-next` lane to prove first), and runs
+`mobile/android/android.sh test` on it. A failing scheduled, dispatched or
+push run opens one issue labeled `ci-failure` and `lane:android-native` that
+mentions and assigns the maintainers (the repository variable
+`CI_MAINTAINERS`, handles separated by spaces or commas; the repository owner
+when unset), comments while the failure persists, and closes on recovery.
+The reporter is a copy of AssetPipeline's `scripts/ci/report_outcome.sh`;
+the shard's copy is canonical and the app's copy is its own, so the report
+job needs no shard install. A `report_selftest` dispatch input opens and
+closes a `lane:selftest` issue to prove the tagging without a failing gate.
+
+The CLI proves itself the same way. `.github/workflows/generated-android.yml`
+builds the CLI, reads the AssetPipeline commit `hybrid_app.cr` pins, checks
+that commit out for its pins and launcher, generates a hybrid application
+with the built CLI, and runs `scripts/test_generated_android.sh --released`
+on the generated application's target and on the newest supported runtime
+(`spec/native/generated_android_lane_spec.cr` holds the contract). When
+AssetPipeline moves, the pin in `hybrid_app.cr` moves with it and this lane
+says whether generated applications still build and pass on the runtimes
+that matter.
