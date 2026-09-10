@@ -28,6 +28,25 @@ esac
 [[ -n "$serial" ]] || { echo "Specify an ADB serial. No device test has been run." >&2; exit 2; }
 [[ "$("$adb" -s "$serial" get-state)" == device ]] || { echo "ADB target is not ready: $serial" >&2; exit 1; }
 [[ "$("$adb" -s "$serial" shell getprop sys.boot_completed | tr -d '\r')" == 1 ]] || { echo "Android has not completed boot: $serial" >&2; exit 1; }
+# A freshly booted CI emulator can sit on the keyguard, and the API 35 x86_64
+# image boots into a launcher "isn't responding" dialog, a system alert window
+# that covers the app and swallows every wait: wake, dismiss, close the system
+# dialogs, and hide error dialogs for the run (restored on exit), as
+# AssetPipeline's own driver does.
+"$adb" -s "$serial" shell input keyevent KEYCODE_WAKEUP > /dev/null 2>&1 || true
+"$adb" -s "$serial" shell wm dismiss-keyguard > /dev/null 2>&1 || true
+"$adb" -s "$serial" shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS > /dev/null 2>&1 || true
+previous_hide_error_dialogs="$("$adb" -s "$serial" shell settings get global hide_error_dialogs 2>/dev/null | tr -d '\r')"
+restore_hide_error_dialogs() {
+  if [[ -z "$previous_hide_error_dialogs" || "$previous_hide_error_dialogs" == null ]]; then
+    "$adb" -s "$serial" shell settings delete global hide_error_dialogs > /dev/null 2>&1 || true
+  else
+    "$adb" -s "$serial" shell settings put global hide_error_dialogs "$previous_hide_error_dialogs" > /dev/null 2>&1 || true
+  fi
+}
+trap restore_hide_error_dialogs EXIT
+"$adb" -s "$serial" shell settings put global hide_error_dialogs 1 > /dev/null 2>&1 || true
+for _ in 1 2 3; do "$adb" -s "$serial" shell input keyevent KEYCODE_BACK > /dev/null 2>&1 || true; done
 ./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease :app:bundleRelease --console=plain
 "$adb" -s "$serial" install -r app/build/outputs/apk/debug/app-debug.apk
 if [[ "$action" == run ]]; then
@@ -68,7 +87,7 @@ log_start="$("$adb" -s "$serial" shell "date '+%m-%d %H:%M:%S.000'" | tr -d '\r'
 "$adb" -s "$serial" logcat -v threadtime -T "$log_start" > "$evidence/logcat-live.txt" 2> "$evidence/logcat-capture-stderr.txt" &
 live_logcat_pid=$!
 stop_live_logcat() { kill "$live_logcat_pid" 2>/dev/null || true; wait "$live_logcat_pid" 2>/dev/null || true; }
-trap stop_live_logcat EXIT
+trap 'stop_live_logcat; restore_hide_error_dialogs' EXIT
 "$adb" -s "$serial" shell am instrument -w -r -e class dev.amber.generated.NativeApplicationTest,dev.assetpipeline.androidhost.StoragePlatformTest,dev.assetpipeline.androidhost.SecretsPlatformTest,dev.assetpipeline.androidhost.FilesPlatformTest \
   "$app_id.test/androidx.test.runner.AndroidJUnitRunner" > "$evidence/instrumentation.txt" 2>&1
 if ! grep -Eq '^OK \([1-9][0-9]* tests?\)' "$evidence/instrumentation.txt" ||

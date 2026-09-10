@@ -44,7 +44,10 @@ describe AmberCLI::Native::AndroidShellGenerator do
     # The device suite streams logcat from its start; a dump taken afterward loses the
     # runtime's load line once a slow emulator wraps its buffer.
     files["mobile/android/android.sh"].should contain("logcat-live.txt")
-    files["mobile/android/android.sh"].should contain("trap stop_live_logcat EXIT")
+    files["mobile/android/android.sh"].should contain("stop_live_logcat; restore_hide_error_dialogs")
+    # The API 35 x86_64 image boots into a launcher ANR dialog that covers the app.
+    files["mobile/android/android.sh"].should contain("settings put global hide_error_dialogs 1")
+    files["mobile/android/android.sh"].should contain("CLOSE_SYSTEM_DIALOGS")
     files["mobile/android/app/src/main/java/dev/amber/generated/MainActivity.kt"].should contain("NativeNavigation(this)")
     files["mobile/android/app/src/main/AndroidManifest.xml"].should contain("android:enableOnBackInvokedCallback=\"true\"")
     files["mobile/android/app/src/main/AndroidManifest.xml"].should contain(%(android:authorities="${applicationId}.assetpipeline.photos"))
