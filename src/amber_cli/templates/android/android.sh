@@ -74,6 +74,13 @@ trap stop_live_logcat EXIT
 if ! grep -Eq '^OK \([1-9][0-9]* tests?\)' "$evidence/instrumentation.txt" ||
     ! grep -q '^INSTRUMENTATION_CODE: -1' "$evidence/instrumentation.txt" ||
     grep -Eq 'Process crashed|FAILURES!!!|INSTRUMENTATION_FAILED|INSTRUMENTATION_STATUS_CODE: -[1234]' "$evidence/instrumentation.txt"; then
+  # What the screen held when the suite failed: the view dump is what a text
+  # wait searches, the screenshot is what a person sees.
+  "$adb" -s "$serial" shell uiautomator dump /sdcard/amber-generated-failure.xml > /dev/null 2>&1 || true
+  "$adb" -s "$serial" pull /sdcard/amber-generated-failure.xml "$evidence/failure-ui.xml" > /dev/null 2>&1 || true
+  "$adb" -s "$serial" exec-out screencap -p > "$evidence/failure-screen.png" 2>/dev/null || true
+  "$adb" -s "$serial" shell dumpsys window windows > "$evidence/failure-windows.txt" 2>/dev/null || true
+  "$adb" -s "$serial" logcat -d -v threadtime -T "$log_start" > "$evidence/logcat-tail.txt" 2>/dev/null || true
   echo "Android instrumentation failed; inspect $evidence" >&2; exit 1
 fi
 "$adb" -s "$serial" logcat -d -v threadtime -T "$log_start" > "$evidence/logcat-tail.txt"

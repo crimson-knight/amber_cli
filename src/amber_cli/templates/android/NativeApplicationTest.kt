@@ -37,7 +37,12 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class NativeApplicationTest {
-    companion object { const val EXPECTED_NAME = "Android 雪 😀 e\u0301" }
+    companion object {
+        const val EXPECTED_NAME = "Android 雪 😀 e\u0301"
+        // The first launch after an install pays for the Crystal runtime and the stored
+        // snapshot on a cold emulator; later waits keep the shorter budget.
+        const val FIRST_RENDER_TIMEOUT_MS = 10000L
+    }
     private fun awaitText(text: String) {
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         assertTrue("Native view did not display: $text", device.wait(Until.hasObject(By.text(text)), 5000L))
@@ -62,7 +67,7 @@ class NativeApplicationTest {
         var expectedCount = 0
         try {
             val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
-            val countView = requireNotNull(device.wait(Until.findObject(By.text(Pattern.compile("^Count: [0-9]+$"))), 5000L))
+            val countView = requireNotNull(device.wait(Until.findObject(By.text(Pattern.compile("^Count: [0-9]+$"))), FIRST_RENDER_TIMEOUT_MS))
             expectedCount = countView.text.removePrefix("Count: ").toInt() + 1
             awaitText("Session: Foreground / starts 1 / backgrounds 0")
             onView(NativeTestIds.withTestId("counter-app-mark")).check { view, error ->
